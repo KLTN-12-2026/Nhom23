@@ -3,6 +3,7 @@ import { handle, objectId, pageArgs, textField } from '@packages/utils/api';
 import { submitProductReport, violationFields } from '@packages/utils/product-moderation';
 import { ForbiddenError, RateLimitError, ValidationError } from '@packages/error-handler';
 import { transaction } from '@packages/utils/transaction';
+import { canAdmin } from '@packages/utils/admin-access';
 
 export const reportProduct = handle(async (req, res) => {
   const productId = objectId(req.params.id), reason = textField(req.body.reason, 'report reason', 2000);
@@ -46,14 +47,29 @@ export const requestSellerUnsuspend = handle(async (req, res) => {
   const seller = await prisma.sellers.findUnique({ where: { id: req.seller.id } });
   if (!seller) throw new ForbiddenError();
   if (!seller.suspendedAt) throw new ValidationError('Your account is not suspended');
-  // Removed restriction for temporary suspension
   const reason = textField(req.body.reason, 'reason', 2000);
-  const existing = await prisma.sellerUnsuspendRequest.findFirst({ where: { sellerId: req.seller.id, status: 'Pending' } });
-  // Make retries safe when the browser did not receive the response or its
-  // status query failed. A pending request is already the desired outcome.
-  if (existing) return res.status(200).json({ request: { id: existing.id, status: existing.status, createdAt: existing.createdAt } });
-  const request = await prisma.sellerUnsuspendRequest.create({ data: { sellerId: req.seller.id, shopId: req.seller.shop.id, reason } });
-  res.status(201).json({ request: { id: request.id, status: request.status, createdAt: request.createdAt } });
+  const result = await transaction(async tx => {
+    const existing = await tx.sellerUnsuspendRequest.findFirst({ where: { sellerId: req.seller!.id, status: 'Pending' } });
+    // Make retries safe when the browser did not receive the response or its
+    // status query failed. A pending request is already the desired outcome.
+    if (existing) return { request: existing, created: false };
+
+    const request = await tx.sellerUnsuspendRequest.create({ data: { sellerId: req.seller!.id, shopId: req.seller!.shop!.id, reason } });
+    const admins = await tx.users.findMany({ where: { role: 'admin' }, select: { id: true, role: true, adminRole: true } });
+    const recipients = admins.filter(admin => canAdmin(admin, 'accounts'));
+    if (recipients.length) {
+      await tx.notifications.createMany({ data: recipients.map(admin => ({
+        userId: admin.id,
+        type: 'System' as const,
+        title: 'Seller reinstatement request',
+        message: `${req.seller!.name} (${req.seller!.shop!.name}) requested account reinstatement. Reason: ${reason}`,
+        redirectUrl: '/dashboard/violations',
+        metadata: { event: 'seller_unsuspend_request', requestId: request.id, sellerId: seller.id, shopId: req.seller!.shop!.id, sellerName: seller.name, shopName: req.seller!.shop!.name, reason },
+      })) });
+    }
+    return { request, created: true };
+  });
+  res.status(result.created ? 201 : 200).json({ request: { id: result.request.id, status: result.request.status, createdAt: result.request.createdAt } });
 });
 
 export const getSellerUnsuspendStatus = handle(async (req, res) => {

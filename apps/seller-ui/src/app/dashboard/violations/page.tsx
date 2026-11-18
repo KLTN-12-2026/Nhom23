@@ -99,8 +99,8 @@ export default function SellerViolationsPage() {
             <p className="mt-4 text-sm text-slate-400">{t('Đang kiểm tra...', 'Checking...')}</p>
           ) : unsuspendStatus.data?.request?.status === 'Pending' ? (
             <p className="mt-4 text-sm text-blue-300">{t('Đang có yêu cầu mở khóa chờ duyệt', 'Reinstatement request pending review')}</p>
-          ) : unsuspendStatus.data?.request?.status === 'Approved' ? (
-            <p className="mt-4 text-sm text-emerald-300">{t('Yêu cầu mở khóa đã được chấp nhận. Tài khoản sẽ được khôi phục.', 'Reinstatement request approved. Account will be restored.')}</p>
+          ) : unsuspendStatus.data?.request?.status === 'Approved' && !isSuspended ? (
+            <p className="mt-4 text-sm text-emerald-300">{t('Yêu cầu mở khóa đã được chấp nhận. Tài khoản đã được khôi phục.', 'Reinstatement request approved. Your account has been restored.')}</p>
           ) : unsuspendStatus.isError ? (
             <div className="mt-4 space-y-2">
               <p role="alert" className="text-sm text-rose-300">{t('Không kiểm tra được trạng thái yêu cầu mở khóa.', 'Could not load reinstatement request status.')}</p>
@@ -108,6 +108,9 @@ export default function SellerViolationsPage() {
             </div>
           ) : (
             <div className="mt-4 space-y-3">
+              {unsuspendStatus.data?.request?.status === 'Approved' && isSuspended && (
+                <p className="text-sm text-amber-300">{t('Yêu cầu trước đây đã được chấp nhận, nhưng tài khoản hiện đang bị khóa lại. Bạn có thể gửi yêu cầu xem xét mới.', 'A previous reinstatement request was approved, but your account has since been suspended again. You can submit a new request.')}</p>
+              )}
               <label className="block text-sm text-slate-400">
                 {t('Lý do yêu cầu mở khóa', 'Reason for reinstatement request')}
                 <textarea

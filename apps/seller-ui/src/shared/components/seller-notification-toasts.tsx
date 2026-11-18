@@ -2,6 +2,7 @@
 import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
+import { ToastContent } from "@packages/components/toast-host";
 import useSeller from "apps/seller-ui/src/hooks/useSeller";
 import axios from "apps/seller-ui/src/utils/axioInstance";
 
@@ -24,7 +25,11 @@ export default function SellerNotificationToasts() {
     }
     for (const item of [...data.notifications].reverse()) {
       if (!seen.current.ids.has(item.id) && !item.isRead) {
-        toast(<div><p className="font-semibold">{item.title}</p><p className="text-sm">{item.message}</p></div>, {
+        const detailAt = item.message.indexOf(": ");
+        const body = detailAt > 0 ? item.message.slice(0, detailAt) : item.message;
+        const detail = detailAt > 0 ? item.message.slice(detailAt + 2) : undefined;
+        const moderationWarning = /violation|not approved|policy|suspend|flagged/i.test(item.title);
+        toast(<ToastContent kind={moderationWarning ? "warning" : "notification"} title={item.title} body={body} detail={detail} />, {
           id: `seller-notification-${item.id}`, duration: 6000,
         });
       }

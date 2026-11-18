@@ -8,6 +8,7 @@ import useAdmin from '../app/hooks/useAdmin';
 import { useRouter } from 'next/navigation';
 import axios from '../utils/axioInstance';
 import { LanguageSwitcher, useLanguage } from '@packages/components/language-switcher';
+import AdminNotificationToasts from './components/admin-notification-toasts';
 
 const permissionByPath: Record<string, AdminPermission> = { '': 'overview', '/orders': 'orders', '/statistics': 'overview', '/payments': 'payments', '/products': 'catalog', '/events': 'catalog', '/templates': 'catalog', '/returns': 'returns', '/users': 'accounts', '/sellers': 'accounts', '/violations': 'moderation', '/notifications': 'notifications', '/notification-jobs': 'notifications', '/loggers': 'logs', '/audit': 'team', '/log-settings': 'settings', '/management': 'team', '/customization': 'settings' };
 const groups = [
@@ -59,6 +60,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
   }, []);
   const navigation = <>{visibleGroups.map(group => <div key={group.title}><p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">{label(group.title)}</p><div className="space-y-1">{group.links.map(({ label: itemLabel, path, icon: Icon }) => <Link key={path} onClick={() => setOpen(false)} href={`/dashboard${path}`} aria-current={pathname === `/dashboard${path}` ? 'page' : undefined} className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm ${pathname === `/dashboard${path}` ? 'bg-blue-500/15 font-medium text-blue-400 ring-1 ring-inset ring-blue-500/20' : 'text-slate-400 hover:bg-slate-800/60 hover:text-white'}`}><Icon size={18} strokeWidth={1.7} />{label(itemLabel)}{pathname === `/dashboard${path}` && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-blue-400" />}</Link>)}</div></div>)}</>;
   return <div className="min-h-screen bg-[#080b12]">
+    <AdminNotificationToasts />
     <a href="#admin-main" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:bg-blue-600 focus:p-3">Skip to content</a>
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-[248px] flex-col border-r border-gray-800 bg-[#0b0f18] lg:flex">
       <Link href="/dashboard" className="flex items-center gap-3 px-6 py-7"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white"><ShoppingBag size={22} /></span><span className="text-xl font-bold tracking-tight text-white">Eshop<span className="ml-2 rounded border border-blue-400/20 bg-blue-500/10 px-1.5 py-1 text-[9px] font-semibold uppercase tracking-widest text-blue-400">Admin</span></span></Link>

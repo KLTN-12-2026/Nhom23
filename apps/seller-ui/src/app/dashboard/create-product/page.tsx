@@ -13,6 +13,7 @@ import { useRef, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
+import { toastWarning } from "@packages/components/toast-host";
 import { enhancements } from "apps/seller-ui/src/utils/AI.enhancement";
 import useSeller from "apps/seller-ui/src/hooks/useSeller";
 
@@ -83,9 +84,9 @@ export default function CreateProduct() {
   const error = (key: string) => errors[key] ? <p className="mt-1 text-xs leading-5 text-rose-400" role="alert">{String(errors[key]?.message || "Check this field")}</p> : null;
   const upload = async (file?: File) => {
     if (!file || imageLock.current || saving) return;
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) { toast.error("Choose a JPG, PNG or WebP image."); return; }
-    if (file.size > 5 * 1024 * 1024) { toast.error("Each image must be 5 MB or smaller."); return; }
-    if (images.length >= 8) { toast.error("You can upload up to 8 images."); return; }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) { toastWarning("Choose a JPG, PNG or WebP image."); return; }
+    if (file.size > 5 * 1024 * 1024) { toastWarning("Each image must be 5 MB or smaller."); return; }
+    if (images.length >= 8) { toastWarning("You can upload up to 8 images."); return; }
     imageLock.current = true; setImageBusy(true);
     try {
       const fileName = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error("Could not read image")); reader.readAsDataURL(file); });
@@ -106,7 +107,7 @@ export default function CreateProduct() {
   };
   const submit = async (values: any) => {
     if (imageLock.current || saving) return;
-    if (!images.length) { toast.error("Upload at least one product image."); return; }
+    if (!images.length) { toastWarning("Upload at least one product image."); return; }
     setSaving(true);
     try {
       const response = await axios.post("/product/api/create-product", { ...values, images, title: values.title.trim(), tag: values.tag.split(",").map((v: string) => v.trim()).filter(Boolean) });
@@ -130,20 +131,12 @@ export default function CreateProduct() {
       <footer className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-slate-900 p-4"><p className="text-xs text-slate-500">Fields marked * are required.</p><div className="flex gap-3"><Link href="/dashboard/all-products" className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-800">Cancel</Link><button type="submit" disabled={saving || imageBusy || categoriesQuery.isLoading || categoriesQuery.isError} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50">{saving ? <Loader2 className="animate-spin" size={17}/> : <Plus size={17}/>} {saving ? "Creating…" : "Create product"}</button></div></footer>
       </div>
     </form>
-    {saving && !enhance && <div className="fixed inset-0 z-[120] items-center justify-center bg-slate-950/90 backdrop-blur-lg relative overflow-hidden rounded-2xl" role="status" aria-live="polite" aria-label="AI is screening your product">
-      <div className="absolute inset-0">
-        <div className="absolute inset-0 bg-gradient-to-br from-slate-950/50 via-slate-900/30 to-slate-950/80"></div>
-        <svg className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
-          <defs>
-            <linearGradient id="scanGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="cyan-400" stopOpacity="0.4"/>
-              <stop offset="100%" stopColor="blue-500" stopOpacity="0.4"/>
-            </linearGradient>
-          </defs>
-          <rect className="pt-6" width="100%" height="100%" fill="url(#scanGrad)"/>
-        </svg>
+    {saving && !enhance && <div className="fixed inset-0 z-[120] flex items-center justify-center overflow-hidden bg-slate-950/90 p-4 backdrop-blur-lg" role="status" aria-live="polite" aria-label="AI is screening your product">
+      <div className="pointer-events-none absolute inset-0" aria-hidden="true">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(8,145,178,0.12),transparent_68%)]"></div>
+        <div className="scan-beam absolute left-0 top-0 h-40 w-full"></div>
       </div>
-      <div className="relative flex flex-col items-center justify-center gap-4 py-12 px-6 max-w-md w-full">
+      <div className="relative z-10 flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col items-center justify-center gap-4 overflow-y-auto rounded-2xl border border-cyan-400/10 bg-slate-950/65 px-6 py-10 shadow-2xl shadow-cyan-950/20 backdrop-blur-md">
         <div className="relative select-none">
           {images[0]?.url ? <img src={images[0].url} alt="" className="h-24 w-24 rounded-2xl object-cover border border-cyan-500/20 mx-auto" /> : <div className="h-12 w-12 rounded-2xl bg-slate-800/50 border border-cyan-500/20 flex items-center justify-center mx-auto"><WandSparkles size={32} className="text-cyan-400"/></div>}
           <div className="mt-4 text-center">
@@ -153,7 +146,7 @@ export default function CreateProduct() {
         </div>
         <div className="w-full max-w-md">
           <div className="mt-6 rounded-full h-1.5 bg-gradient-to-r from-cyan-500/30 via-blue-500/20 to-cyan-500/30 overflow-hidden">
-            <div className="h-full w-full bg-gradient-to-r from-cyan-500 via-blue-500 to-cyan-500" style="width: 33.33%; animation: progress 4.5s linear infinite;"></div>
+            <div className="progress-bar h-full w-1/3 rounded-full bg-gradient-to-r from-cyan-500 via-blue-400 to-cyan-300"></div>
           </div>
           <p className="mt-2 text-xs text-slate-500/60 center">Quá trình có thể mất vài giây</p>
         </div>
@@ -161,7 +154,29 @@ export default function CreateProduct() {
           <button onClick={() => setSaving(false)} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:pointer-events-none">Huỷ</button>
         </div>
       </div>
-      <style jsx>{`@keyframes progress { from { transform: translateX(-100%); } to { transform: translateX(300%); } } @media (prefers-reduced-motion: reduce) { .progress-bar { animation: none; } }`}</style>
+      <style jsx>{`
+        .scan-beam {
+          background: linear-gradient(180deg, transparent, rgba(34, 211, 238, 0.025) 35%, rgba(34, 211, 238, 0.12) 88%, rgba(56, 189, 248, 0.28));
+          filter: blur(1px);
+          animation: scan-sweep 4.2s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate;
+          will-change: transform;
+        }
+        .progress-bar {
+          animation: progress 3.6s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate;
+          will-change: transform;
+        }
+        @keyframes scan-sweep {
+          from { transform: translateY(-100%); }
+          to { transform: translateY(calc(100dvh - 10rem)); }
+        }
+        @keyframes progress {
+          from { transform: translateX(-105%); }
+          to { transform: translateX(305%); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .scan-beam, .progress-bar { animation: none; }
+        }
+      `}</style>
     </div>}
     {enhance && <div role="dialog" aria-modal="true" aria-labelledby="enhance-title" className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm"><div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 p-5"><div className="mb-4 flex items-center justify-between"><h2 id="enhance-title" className="font-semibold">Enhance product photo</h2><button type="button" aria-label="Close photo editor" onClick={() => setEnhance(null)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800"><X size={18}/></button></div><div className="relative h-64 overflow-hidden rounded-xl bg-slate-950"><img src={enhance.url} alt="Enhanced product preview" className="h-full w-full object-contain" onLoad={() => setPreviewLoading(false)} onError={() => { setPreviewLoading(false); setPreviewError(true); toast.error("The enhanced image could not be loaded. Choose another effect or close the editor."); }}/>{previewLoading && <div className="absolute inset-0 flex items-center justify-center bg-slate-950/70"><Loader2 className="animate-spin"/></div>}</div><div className="mt-4 grid grid-cols-2 gap-2">{enhancements.map(({ label, effect }) => <button type="button" key={effect} disabled={previewLoading} onClick={() => applyEffect(effect)} className="rounded-lg border border-slate-700 p-2 text-left text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40">{label}</button>)}</div><button type="button" disabled={previewLoading || previewError} onClick={() => { setImages(previous => previous.map((image, index) => index === enhance.index ? { ...image, url: enhance.url } : image)); setEnhance(null); }} className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-2.5 text-sm font-semibold disabled:opacity-50"><Save size={16}/>Apply to product</button></div></div>}
   </main>;
