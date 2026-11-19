@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowRight, Check, ChevronDown, CircleHelp, Gamepad2, Laptop, Loader2, MonitorCog, ShieldCheck, Sparkles, X } from 'lucide-react';
+import { ArrowRight, Check, ChevronDown, CircleHelp, Gamepad2, Laptop, Loader2, MonitorCog, RefreshCw, ShieldCheck, Sparkles, X } from 'lucide-react';
 import { useStorefrontText } from '@packages/components/storefront-language';
 import { PC_SLOTS, PcSlot } from '@packages/utils/pc-build';
 import type { PcSelection } from '@packages/utils/pc-build-selection';
@@ -69,10 +69,10 @@ export default function PcBuildGuide({ onApply, currentPartCount = 0 }: { onAppl
 
   async function generate() {
     let maxBudget = Number(budget);
-    // If a preset is selected, use its value as the budget
     if (selectedPreset !== null) {
       maxBudget = selectedPreset;
-      setSelectedPreset(null); // Clear preset after applying
+      setBudget(String(selectedPreset));
+      setSelectedPreset(null);
     }
     if (!Number.isFinite(maxBudget) || maxBudget < 250 || maxBudget > 20000) {
       setError(t('Enter a budget between $250 and $20,000.'));
@@ -124,6 +124,44 @@ export default function PcBuildGuide({ onApply, currentPartCount = 0 }: { onAppl
   const total = Number.isFinite(Number(quote?.total)) ? Number(quote.total) : suggestions.reduce((sum, item) => sum + item.price, 0);
   const selectedGoal = goals.find(item => item.id === goal)!;
 
+  async function replaceSuggestion(slot: PcSlot) {
+    const replacing = suggestions.find(item => item.selection.slot === slot);
+    if (!replacing || loading) return;
+    const remaining = Number(budget) - suggestions.filter(item => item.selection.slot !== slot).reduce((sum, item) => sum + item.price, 0);
+    if (!Number.isFinite(remaining) || remaining <= 0) return;
+    setLoading(true); setError(''); setQuoteError('');
+    try {
+      const otherParts = suggestions.filter(item => item.selection.slot !== slot);
+      const { data } = await axios.get('/product/api/pc-builder/catalog', {
+        params: { slot, sort: 'priceAsc', page: 1, limit: 100, parts: JSON.stringify(otherParts.map(item => item.selection)) },
+      });
+      const candidates = (Array.isArray(data?.products) ? data.products : [])
+        .map((product: Product) => productChoice(product, slot, remaining, remaining))
+        .filter((item: SuggestedPart | undefined): item is SuggestedPart => !!item && item.selection.id !== replacing.selection.id)
+        .sort((a: SuggestedPart, b: SuggestedPart) => (statusRank[a.status] || 0) - (statusRank[b.status] || 0) || a.price - b.price);
+      const alternative = candidates[0];
+      if (!alternative) {
+        setError(t('No compatible in-stock alternative fits the remaining budget.'));
+        return;
+      }
+      const next = [...otherParts, alternative].sort((a, b) => PC_SLOTS.indexOf(a.selection.slot) - PC_SLOTS.indexOf(b.selection.slot));
+      setSuggestions(next);
+      try {
+        const { data: currentQuote } = await axios.post('/product/api/pc-builder/quote', { parts: next.map(item => item.selection) });
+        setQuote(currentQuote);
+        setSuggestions(next.map(item => {
+          const current = currentQuote.parts?.find((part: any) => part.slot === item.selection.slot);
+          return current ? { ...item, title: current.title, price: Number(current.sale_price), selection: { slot: current.slot, id: current.id, ...(current.variantId ? { variantId: current.variantId } : {}), selectedOptions: current.selectedOptions || item.selection.selectedOptions } } : item;
+        }));
+      } catch (reason: any) {
+        setQuote(null);
+        setQuoteError(reason?.response?.data?.message || t('Could not verify the latest price and compatibility. Review the build before adding it to your cart.'));
+      }
+    } catch (reason: any) {
+      setError(reason?.response?.data?.message || t('Could not find an alternative. Please try again.'));
+    } finally { setLoading(false); }
+  }
+
   function applySuggestion() {
     if (currentPartCount > 0 && !confirmApply) { setConfirmApply(true); return; }
     onApply(suggestions.map(item => item.selection));
@@ -165,7 +203,7 @@ export default function PcBuildGuide({ onApply, currentPartCount = 0 }: { onAppl
               max="20000"
               step="50"
               value={budget}
-              onChange={event => setBudget(event.target.value)}
+              onChange={event => { setBudget(event.target.value); setSelectedPreset(null); }}
               className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-8 pr-16 text-sm font-semibold text-slate-800 outline-none focus-border-blue-400 focus:ring-2 focus:ring-blue-100"
             />
             <span className="pointer-events-none absolute right-3 top-3 text-xs text-slate-400">USD</span>
@@ -195,7 +233,7 @@ export default function PcBuildGuide({ onApply, currentPartCount = 0 }: { onAppl
       {error && <p role="alert" className="rounded-xl border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-700">{t(error)}</p>}
       {suggestions.length > 0 && <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 sm:p-5" aria-live="polite">
         <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="font-bold text-slate-900">{t('Your starting build')}</h3><p className="mt-1 text-xs text-slate-500">{t('A starting point based on your answers. Change any component below.')}</p></div><div className="text-right"><p className="text-[11px] font-medium text-slate-500">{t('Estimated total')}</p><p className="text-xl font-bold tabular-nums text-blue-700">{formatUSD(total)}</p></div></div>
-        <ul className="divide-y divide-slate-200 rounded-xl border border-slate-200 bg-white">{suggestions.map(item => <li key={item.selection.slot} className="flex min-w-0 items-center justify-between gap-3 px-3 py-2.5 text-xs"><span className="min-w-0"><span className="block font-semibold text-slate-700">{t(labels[item.selection.slot])}</span><span className="block truncate text-slate-500">{item.title}</span></span><span className="shrink-0 text-right"><span className="block font-semibold tabular-nums text-slate-800">{formatUSD(item.price)}</span><span className={`mt-0.5 block ${item.status === 'matched' ? 'text-emerald-700' : item.status === 'unknown' ? 'text-amber-700' : 'text-slate-500'}`}>{t(item.status === 'matched' ? 'Specifications match' : item.status === 'unknown' ? 'Review specifications' : 'No related check yet')}</span></span></li>)}</ul>
+        <ul className="divide-y divide-slate-200 rounded-xl border border-slate-200 bg-white">{suggestions.map(item => <li key={item.selection.slot} className={`flex min-w-0 items-center justify-between gap-3 px-3 py-2.5 text-xs ${item.status === 'matched' ? 'bg-emerald-50/60' : item.status === 'unknown' ? 'bg-amber-50/60' : 'bg-white'}`}><span className="min-w-0"><span className="block font-semibold text-slate-700">{t(labels[item.selection.slot])}</span><span className="block truncate text-slate-500">{item.title}</span><button type="button" disabled={loading} onClick={() => void replaceSuggestion(item.selection.slot)} className="mt-1 inline-flex items-center gap-1 font-medium text-blue-700 hover:underline disabled:opacity-50"><RefreshCw size={12} className={loading ? 'animate-spin' : ''} aria-hidden="true" />{t('Find an alternative within budget')}</button></span><span className="shrink-0 text-right"><span className="block font-semibold tabular-nums text-slate-800">{formatUSD(item.price)}</span><span className={`mt-0.5 block ${item.status === 'matched' ? 'text-emerald-700' : item.status === 'unknown' ? 'text-amber-700' : 'text-slate-500'}`}>{t(item.status === 'matched' ? 'Specifications match' : item.status === 'unknown' ? 'Review specifications' : 'No related check yet')}</span></span></li>)}</ul>
         {quoteError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-900">{t(quoteError)}</p>}
         {quote && <div role={quote.canAddToCart ? 'status' : 'alert'} className={`rounded-xl border px-3 py-3 ${quote.canAddToCart ? 'border-emerald-200 bg-emerald-50/70 text-emerald-900' : 'border-red-200 bg-red-50 text-red-900'}`}>
           <p className="flex items-center gap-2 text-xs font-bold"><ShieldCheck size={15} aria-hidden="true" />{t('Compatibility review')} · {quote.canAddToCart ? t('No known blocking conflicts') : t('Resolve issues before adding to cart')}</p>

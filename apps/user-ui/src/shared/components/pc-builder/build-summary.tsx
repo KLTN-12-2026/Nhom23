@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import {
   ArrowRight, Check, ChevronDown, CircuitBoard, Cpu, Fan, HardDrive,
-  Info, Loader2, MemoryStick, Monitor, Package, Pencil, Plus,
+  Info, Loader2, MemoryStick, Monitor, Package, Pencil, Plus, Sparkles,
   RefreshCw, ShoppingCart, Trash2, TriangleAlert, Zap,
 } from 'lucide-react';
 import { useStorefrontText } from '@packages/components/storefront-language';
@@ -154,7 +154,17 @@ export default function PcBuildSummary({
         </div>
       )}
 
-      {selectedCount > 0 && <div className="px-5 pb-5 sm:px-6">
+      {selectedCount > 0 && <div className="space-y-3 px-5 pb-5 sm:px-6">
+        <div className="relative isolate overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-br from-[#101b31] via-[#10182b] to-[#172340] p-4 text-white shadow-[0_10px_28px_rgba(15,23,42,0.18)]">
+          <div aria-hidden="true" className="pointer-events-none absolute -right-10 -top-16 h-40 w-40 rounded-full bg-cyan-400/15 blur-3xl" />
+          <div className="relative flex items-center gap-3">
+            <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-cyan-200/20 bg-gradient-to-br from-blue-400/25 to-violet-400/20 text-cyan-100 shadow-[0_0_24px_rgba(34,211,238,0.16)]"><Sparkles size={20} aria-hidden="true" /><span aria-hidden="true" className="absolute inset-0 rounded-2xl border border-cyan-100/20 animate-ping [animation-duration:2.8s] motion-reduce:animate-none" /></span>
+            <div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100/70">ESHOP · SMART CHECK</p><h3 className="mt-0.5 text-sm font-bold">{t('Smart compatibility scan')}</h3><p className="mt-1 text-[11px] text-slate-300">{t('Live component and specification analysis')}</p></div>
+            <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${quoteLoading ? 'border-cyan-200/20 bg-cyan-200/10 text-cyan-100' : quoteError || errors.length ? 'border-rose-200/20 bg-rose-200/10 text-rose-100' : unknownChecks.length || warnings.length ? 'border-amber-200/20 bg-amber-200/10 text-amber-100' : 'border-emerald-200/20 bg-emerald-200/10 text-emerald-100'}`}><span className={`h-1.5 w-1.5 rounded-full ${quoteLoading ? 'animate-pulse bg-cyan-200' : quoteError || errors.length ? 'bg-rose-300' : unknownChecks.length || warnings.length ? 'bg-amber-300' : 'bg-emerald-300'}`} />{t(quoteLoading ? 'Analyzing' : quoteError ? 'Unavailable' : errors.length ? 'Action required' : unknownChecks.length || warnings.length ? 'Review suggested' : 'Ready')}</span>
+          </div>
+          {quoteReady && <div className="relative mt-4 grid grid-cols-2 gap-3 border-t border-white/10 pt-3"><div className="rounded-lg bg-emerald-300/[0.07] px-3 py-2.5"><p className="text-lg font-bold tabular-nums text-emerald-200">{passedChecks.length}</p><p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-100/65">{t('Checked')}</p></div><div className="rounded-lg bg-amber-300/[0.07] px-3 py-2.5"><p className="text-lg font-bold tabular-nums text-amber-200">{unknownChecks.length}</p><p className="text-[10px] font-semibold uppercase tracking-wider text-amber-100/65">{t('Unknown specs')}</p></div><div className="rounded-lg bg-amber-300/[0.07] px-3 py-2.5"><p className="text-lg font-bold tabular-nums text-amber-200">{warnings.length}</p><p className="text-[10px] font-semibold uppercase tracking-wider text-amber-100/65">{t('Review')}</p></div><div className="rounded-lg bg-rose-300/[0.07] px-3 py-2.5"><p className="text-lg font-bold tabular-nums text-rose-200">{errors.length}</p><p className="text-[10px] font-semibold uppercase tracking-wider text-rose-100/65">{t('Blocking')}</p></div></div>}
+          {quoteLoading && <div aria-hidden="true" className="relative mt-4 h-1 overflow-hidden rounded-full bg-white/10"><span className="pc-scan absolute inset-y-0 left-0 w-1/3 rounded-full bg-gradient-to-r from-transparent via-cyan-200 to-transparent shadow-[0_0_12px_rgba(103,232,249,0.8)]" /></div>}
+        </div>
         {quoteLoading ? <p role="status" className="flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs leading-5 text-blue-700"><Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />{t('Checking live prices and compatibility…')}</p>
           : quoteError ? <div role="alert" className="rounded-xl border border-red-100 bg-red-50 p-3 text-xs leading-5 text-red-700"><p className="flex items-start gap-2"><TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /><span className="min-w-0 break-words">{t(quoteError)}</span></p><button type="button" onClick={onRetry} className="ml-6 mt-2 inline-flex items-center gap-1.5 font-semibold underline underline-offset-2"><RefreshCw className="h-3 w-3" aria-hidden="true" />{t('Try again')}</button></div>
             : quoteReady ? <div className="space-y-2">
@@ -162,7 +172,7 @@ export default function PcBuildSummary({
               {unknownChecks.length > 0 && <div className="rounded-xl border border-amber-100 bg-amber-50/70 p-3 text-xs leading-5 text-amber-900">
                 <p className="flex items-center gap-2 font-semibold"><Info className="h-4 w-4 shrink-0" aria-hidden="true" />{t('Needs product specifications')}</p>
                 <p className="mt-1 text-amber-800">{t('The seller has not provided clear specifications for these checks.')}</p>
-                <ul className="mt-2 space-y-2.5">{unknownChecks.map(check => <li key={check.id} className="break-words">
+                <ul className="mt-2 space-y-2">{unknownChecks.map(check => <li key={check.id} className="break-words">
                   <p className="font-medium">{t(check.label)}</p>
                   <p className="text-amber-800">{t(check.field)}: {check.missing.length > 0
                     ? check.missing.map(slot => t(PC_SLOT_LABELS[slot])).join(', ')
@@ -187,6 +197,7 @@ export default function PcBuildSummary({
               </details>}
             </div>
               : <p role="status" className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600">{t('Waiting for a current price check.')}<button type="button" onClick={onRetry} className="ml-1 font-semibold text-blue-600 underline underline-offset-2">{t('Try again')}</button></p>}
+        <style jsx>{`@keyframes pc-scan { 0% { transform: translateX(-130%); } 100% { transform: translateX(430%); } } .pc-scan { animation: pc-scan 2.2s ease-in-out infinite; } @media (prefers-reduced-motion: reduce) { .pc-scan { animation: none; } }`}</style>
       </div>}
 
       <div className="border-t border-slate-100 bg-slate-50/70 p-5 sm:p-6">
