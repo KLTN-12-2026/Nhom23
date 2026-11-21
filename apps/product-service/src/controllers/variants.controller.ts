@@ -5,6 +5,7 @@ import { NotFoundError, ValidationError, ForbiddenError } from '@packages/error-
 import { usdCents } from '@packages/utils/money';
 import { priceReviewReasons } from '@packages/utils/product-listing-rules';
 import { listingSnapshot, submitProductReport } from '@packages/utils/product-moderation';
+import { notifyPcBuildRestock } from '../utils/pc-build-restock';
 
 export const listVariants = handle(async (req, res) => {
   const product = await prisma.products.findFirst({ where: { id: objectId(req.params.id), isDeleted: false, status: 'Active' }, include: { variants: { where: { active: true } } } });
@@ -46,8 +47,12 @@ export const saveVariant = handle(async (req: any, res) => {
       ...(priceReasons.length ? { status: 'PendingReview', moderationReason: reviewReason } : {}),
     }, include: { images: true } });
     if (product.stock !== total) await tx.inventoryHistory.create({ data: { productId, shopId, delta: total - product.stock, stockAfter: total, reason: `SKU ${sku} adjustment`, actorId: req.seller.id } });
-    return { variant: result, priceReasons, reviewReason, snapshot: priceReasons.length ? listingSnapshot(updatedProduct) : null };
+    return { variant: result, priceReasons, reviewReason, snapshot: priceReasons.length ? listingSnapshot(updatedProduct) : null, previousStock: product.stock, updatedProduct };
   });
+  if (result.previousStock <= 0 && result.updatedProduct.stock > 0) {
+    try { await notifyPcBuildRestock(result.updatedProduct.id, result.updatedProduct.title); }
+    catch (error) { console.error('Could not send PC build restock notifications:', error); }
+  }
   if (result.priceReasons.length && result.snapshot) await submitProductReport(productId, req.seller.id, 'AI', 'Misleading', result.reviewReason, result.snapshot).catch(error => console.error('Could not persist automated price review:', error));
   res.json({ variant: result.variant });
 });

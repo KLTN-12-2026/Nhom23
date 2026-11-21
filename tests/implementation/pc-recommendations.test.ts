@@ -20,6 +20,13 @@ test('matches all selected parts before prioritizing stock, with unknowns last a
   expect(result.map(p => p.recommendation.status)).toEqual(['matched', 'matched', 'unknown']);
 });
 
+test('recommendation compatibility includes slot-specific issues for the suggestion view', () => {
+  const recommendation = recommendPcProducts([product('unknown-board', {})], 'motherboard', { cpu: product('unknown-cpu', {}) }, 'recommended')[0];
+  expect(recommendation.recommendation.compatibility.issues).toEqual([
+    { level: 'warning', message: 'Cannot verify CPU / motherboard socket: specifications are missing.' },
+  ]);
+});
+
 test('works in reverse order and when replacing a selected part', () => {
   const result = recommendPcProducts([product('ddr4', { memoryType: 'DDR4' }), product('ddr5', { memoryType: 'DDR5' })], 'ram', {
     motherboard: motherboard('board', 'AM5', 'DDR5'), ram: product('old', { memoryType: 'DDR4' }),

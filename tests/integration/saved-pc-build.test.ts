@@ -12,10 +12,10 @@ let otherBuyer: any;
 let seller: any;
 let product: any;
 
-function appFor(handler: any, method = 'get', actor = buyer) {
+function appFor(handler: any, method = 'get', actor = buyer, path = '/') {
   const app = express(); app.use(express.json());
   app.use((req: any, _res, next) => { req.user = actor; req.role = 'user'; next(); });
-  (app as any)[method]('/', handler); app.use(errorMiddleware); return app;
+  (app as any)[method](path, handler); app.use(errorMiddleware); return app;
 }
 
 beforeAll(async () => {
@@ -102,4 +102,33 @@ test('PC catalog price sort and pagination agree with live filtered database tot
   const secondPage = await request(catalog).get('/?slot=cpu&q=Catalog%20Sort&sort=priceDesc&limit=2&page=2');
   expect(secondPage.body.pagination).toEqual({ page: 2, total: 4, totalPages: 2 });
   expect(secondPage.body.products.map((p: any) => p.id)).toEqual(descending.slice(2, 4).map(p => p.id));
+});
+
+test('named builds keep a price snapshot, list by owner and clean up restock watches on deletion', async () => {
+  const create = appFor(controller.createPcBuild, 'post');
+  const body = { ownerId: buyer.id, name: 'Saved gaming build', parts: [{ slot: 'cpu', id: product.id }] };
+  const response = await request(create).post('/').send(body);
+  expect(response.status).toBe(201);
+  expect(response.body).toMatchObject({
+    name: body.name,
+    parts: body.parts,
+    quote: { total: 95, parts: [{ id: product.id, slot: 'cpu', sale_price: 95 }], updatedAt: expect.any(String) },
+  });
+  const buildId = response.body.id;
+  expect(await db.pcBuildAvailabilityWatch.count({ where: { buildId, ownerId: buyer.id, productId: product.id } })).toBe(1);
+
+  const listed = await request(appFor(controller.getSavedBuilds)).get('/?ownerId=' + buyer.id);
+  expect(listed.body.builds).toHaveLength(1);
+  expect(listed.body.builds[0]).toMatchObject({ id: buildId, name: body.name, quote: { total: 95 } });
+
+  await db.products.update({ where: { id: product.id }, data: { sale_price: 110, stock: 0 } });
+  expect((await request(appFor(controller.quoteBuild, 'post')).post('/').send({ parts: body.parts })).body).toMatchObject({
+    total: 110,
+    canAddToCart: false,
+  });
+  expect((await db.pcBuild.findUnique({ where: { id: buildId } })).quote.total).toBe(95);
+
+  const deleted = await request(appFor(controller.deletePcBuild, 'delete', buyer, '/:id')).delete('/' + buildId);
+  expect(deleted.status).toBe(200);
+  expect(await db.pcBuildAvailabilityWatch.count({ where: { buildId } })).toBe(0);
 });

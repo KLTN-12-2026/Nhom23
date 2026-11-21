@@ -6,6 +6,7 @@ import { NotFoundError, ValidationError, ForbiddenError } from '@packages/error-
 import { scanProductListing } from '@packages/utils/product-moderation-ai';
 import { submitProductReport } from '@packages/utils/product-moderation';
 import { priceReviewReasons, validateProductCategory } from '@packages/utils/product-listing-rules';
+import { notifyPcBuildRestock } from '../utils/pc-build-restock';
 
 export const getEditableProduct = handle(async (req: any, res) => {
   const product = await prisma.products.findFirst({ where: { id: objectId(req.params.id), shopId: req.seller.shop?.id, isDeleted: false }, include: { images: true, variants: true } });
@@ -109,6 +110,10 @@ export const updateProduct = handle(async (req: any, res) => {
     }
     return updated;
   });
+  if (beforeScan.stock <= 0 && product.stock > 0) {
+    try { await notifyPcBuildRestock(product.id, product.title); }
+    catch (error) { console.error('Could not send PC build restock notifications:', error); }
+  }
   if (priceReasons.length || moderation?.flagged) {
     const reportCategory = moderation?.flagged ? moderation.category : 'Misleading';
     await submitProductReport(product.id, req.seller.id, 'AI', reportCategory, String(data.moderationReason || moderation?.reason || priceReasons.join(' ')), candidate).catch(error => console.error('Could not persist automated moderation report:', error));

@@ -9,7 +9,13 @@ import { formatUSD } from '@packages/utils/money';
 import axios from '@/utils/axioInstance';
 
 type Goal = 'office' | 'gaming' | 'creative';
-type SuggestedPart = { selection: PcSelection; title: string; price: number; status: 'matched' | 'unchecked' | 'unknown' };
+type SuggestedPart = {
+  selection: PcSelection;
+  title: string;
+  price: number;
+  status: 'matched' | 'unchecked' | 'unknown';
+  compatibility: { issues: { level: string; message: string }[] };
+};
 
 const labels: Record<PcSlot, string> = {
   cpu: 'CPU / Processor', motherboard: 'Motherboard', ram: 'Memory / RAM',
@@ -32,7 +38,25 @@ const budgetPresets = [
   { value: 3000, label: '$3,000+' },
 ];
 
-type Product = { id: string; title: string; sale_price: number; stock: number; colors?: string[]; sizes?: string[]; variants?: any[]; recommendation?: { status?: SuggestedPart['status'] } };
+type Product = {
+  id: string;
+  title: string;
+  sale_price: number;
+  stock: number;
+  colors?: string[];
+  sizes?: string[];
+  variants?: any[];
+  recommendation?: {
+    status?: SuggestedPart['status'];
+    compatibility?: { issues?: SuggestedPart['compatibility']['issues'] };
+  };
+};
+
+function quoteIssuesForSlot(quote: any, slot: PcSlot) {
+  return (quote?.compatibility?.checks || [])
+    .filter((check: any) => check.slots?.includes(slot) && check.status !== 'passed')
+    .map((check: any) => ({ level: check.status === 'conflict' ? 'error' : 'warning', message: check.message }));
+}
 
 function productChoice(product: Product, slot: PcSlot, remaining: number, target: number): SuggestedPart | undefined {
   if (!product || !product.id || Number(product.stock) < 1) return undefined;
@@ -49,6 +73,7 @@ function productChoice(product: Product, slot: PcSlot, remaining: number, target
     title: product.title,
     price,
     status: product.recommendation?.status === 'matched' || product.recommendation?.status === 'unknown' ? product.recommendation.status : 'unchecked',
+    compatibility: { issues: product.recommendation?.compatibility?.issues || [] },
   };
 }
 
@@ -65,7 +90,6 @@ export default function PcBuildGuide({ onApply, currentPartCount = 0 }: { onAppl
   const [confirmApply, setConfirmApply] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [budgetAllocation, setBudgetAllocation] = useState<Record<PcSlot, number>>({});
 
   async function generate() {
     let maxBudget = Number(budget);
@@ -84,7 +108,6 @@ export default function PcBuildGuide({ onApply, currentPartCount = 0 }: { onAppl
       const chosen: SuggestedPart[] = [];
       let total = 0;
       let remainingWeight = 1;
-      const allocation: Record<PcSlot, number> = {};
       for (const slot of PC_SLOTS) {
         const target = Math.max(0, (maxBudget - total) * profile.weights[slot] / remainingWeight);
         remainingWeight -= profile.weights[slot];
@@ -97,10 +120,9 @@ export default function PcBuildGuide({ onApply, currentPartCount = 0 }: { onAppl
         const pool = affordable.length ? affordable : options;
         pool.sort((a, b) => { var _a, _b; return (statusRank[a.status] || 0) - (statusRank[b.status] || 0) || ((_b = b.price) !== null && _b !== void 0 ? _b : 0) - ((_a = a.price) !== null && _a !== void 0 ? _a : 0); });
         const next = pool[0];
-        if (next) { chosen.push(next); total += next.price; allocation[slot] = next.price; }
-        else { setMissing(current => [...current, slot]); allocation[slot] = 0; }
+        if (next) { chosen.push(next); total += next.price; }
+        else { setMissing(current => [...current, slot]); }
       }
-      setBudgetAllocation(allocation);
       setSuggestions(chosen);
       if (!chosen.length) setError(t('No in-stock components were found. You can still choose parts manually.'));
       else {
@@ -109,7 +131,7 @@ export default function PcBuildGuide({ onApply, currentPartCount = 0 }: { onAppl
           setQuote(data);
           setSuggestions(chosen.map(item => {
             const current = data.parts?.find((part: any) => part.slot === item.selection.slot);
-            return current ? { ...item, selection: { slot: current.slot, id: current.id, ...(current.variantId ? { variantId: current.variantId } : {}), selectedOptions: current.selectedOptions || item.selection.selectedOptions }, title: current.title, price: Number(current.sale_price) } : item;
+            return current ? { ...item, selection: { slot: current.slot, id: current.id, ...(current.variantId ? { variantId: current.variantId } : {}), selectedOptions: current.selectedOptions || item.selection.selectedOptions }, title: current.title, price: Number(current.sale_price), compatibility: { issues: quoteIssuesForSlot(data, item.selection.slot) } } : item;
           }));
         } catch (reason: any) {
           setQuoteError(reason?.response?.data?.message || t('Could not verify the latest price and compatibility. Review the build before adding it to your cart.'));
@@ -151,7 +173,7 @@ export default function PcBuildGuide({ onApply, currentPartCount = 0 }: { onAppl
         setQuote(currentQuote);
         setSuggestions(next.map(item => {
           const current = currentQuote.parts?.find((part: any) => part.slot === item.selection.slot);
-          return current ? { ...item, title: current.title, price: Number(current.sale_price), selection: { slot: current.slot, id: current.id, ...(current.variantId ? { variantId: current.variantId } : {}), selectedOptions: current.selectedOptions || item.selection.selectedOptions } } : item;
+          return current ? { ...item, title: current.title, price: Number(current.sale_price), selection: { slot: current.slot, id: current.id, ...(current.variantId ? { variantId: current.variantId } : {}), selectedOptions: current.selectedOptions || item.selection.selectedOptions }, compatibility: { issues: quoteIssuesForSlot(currentQuote, item.selection.slot) } } : item;
         }));
       } catch (reason: any) {
         setQuote(null);
@@ -228,12 +250,17 @@ export default function PcBuildGuide({ onApply, currentPartCount = 0 }: { onAppl
       </div>
       </div>
 
+      <button type="button" disabled={loading} onClick={() => void generate()} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-wait disabled:opacity-70">
+        {loading ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Sparkles size={16} aria-hidden="true" />}
+        {t(loading ? 'Creating suggestion…' : 'Generate suggested build')}
+      </button>
+
       <p className="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-xs leading-5 text-slate-600"><CircleHelp size={15} className="mt-0.5 shrink-0 text-blue-500" aria-hidden="true" /><span>{t(selectedGoal.detail)} {t('The estimate uses current catalog prices and compatibility data. Review missing specifications before ordering.')}</span></p>
 
       {error && <p role="alert" className="rounded-xl border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-red-700">{t(error)}</p>}
       {suggestions.length > 0 && <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 sm:p-5" aria-live="polite">
         <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="font-bold text-slate-900">{t('Your starting build')}</h3><p className="mt-1 text-xs text-slate-500">{t('A starting point based on your answers. Change any component below.')}</p></div><div className="text-right"><p className="text-[11px] font-medium text-slate-500">{t('Estimated total')}</p><p className="text-xl font-bold tabular-nums text-blue-700">{formatUSD(total)}</p></div></div>
-        <ul className="divide-y divide-slate-200 rounded-xl border border-slate-200 bg-white">{suggestions.map(item => <li key={item.selection.slot} className={`flex min-w-0 items-center justify-between gap-3 px-3 py-2.5 text-xs ${item.status === 'matched' ? 'bg-emerald-50/60' : item.status === 'unknown' ? 'bg-amber-50/60' : 'bg-white'}`}><span className="min-w-0"><span className="block font-semibold text-slate-700">{t(labels[item.selection.slot])}</span><span className="block truncate text-slate-500">{item.title}</span><button type="button" disabled={loading} onClick={() => void replaceSuggestion(item.selection.slot)} className="mt-1 inline-flex items-center gap-1 font-medium text-blue-700 hover:underline disabled:opacity-50"><RefreshCw size={12} className={loading ? 'animate-spin' : ''} aria-hidden="true" />{t('Find an alternative within budget')}</button></span><span className="shrink-0 text-right"><span className="block font-semibold tabular-nums text-slate-800">{formatUSD(item.price)}</span><span className={`mt-0.5 block ${item.status === 'matched' ? 'text-emerald-700' : item.status === 'unknown' ? 'text-amber-700' : 'text-slate-500'}`}>{t(item.status === 'matched' ? 'Specifications match' : item.status === 'unknown' ? 'Review specifications' : 'No related check yet')}</span></span></li>)}</ul>
+        <ul className="divide-y divide-slate-200 rounded-xl border border-slate-200 bg-white">{suggestions.map(item => <li key={item.selection.slot} className={`flex min-w-0 items-center justify-between gap-3 px-3 py-2.5 text-xs ${item.status === 'matched' ? 'bg-emerald-50/60' : item.status === 'unknown' ? 'bg-amber-50/60' : 'bg-white'}`}><span className="min-w-0"><span className="block font-semibold text-slate-700">{t(labels[item.selection.slot])}</span><span className="block truncate text-slate-500">{item.title}</span>{item.compatibility.issues.map((issue, index) => <span key={`${index}:${issue.message}`} className={`mt-1 block break-words ${issue.level === 'error' ? 'text-rose-700' : 'text-amber-700'}`}>{t(issue.message)}</span>)}<button type="button" disabled={loading} onClick={() => void replaceSuggestion(item.selection.slot)} className="mt-1 inline-flex items-center gap-1 font-medium text-blue-700 hover:underline disabled:opacity-50"><RefreshCw size={12} className={loading ? 'animate-spin' : ''} aria-hidden="true" />{t('Find an alternative within budget')}</button></span><span className="shrink-0 text-right"><span className="block font-semibold tabular-nums text-slate-800">{formatUSD(item.price)}</span><span className={`mt-0.5 block ${item.status === 'matched' ? 'text-emerald-700' : item.status === 'unknown' ? 'text-amber-700' : 'text-slate-500'}`}>{t(item.status === 'matched' ? 'Specifications match' : item.status === 'unknown' ? 'Review specifications' : 'No related check yet')}</span></span></li>)}</ul>
         {quoteError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-900">{t(quoteError)}</p>}
         {quote && <div role={quote.canAddToCart ? 'status' : 'alert'} className={`rounded-xl border px-3 py-3 ${quote.canAddToCart ? 'border-emerald-200 bg-emerald-50/70 text-emerald-900' : 'border-red-200 bg-red-50 text-red-900'}`}>
           <p className="flex items-center gap-2 text-xs font-bold"><ShieldCheck size={15} aria-hidden="true" />{t('Compatibility review')} · {quote.canAddToCart ? t('No known blocking conflicts') : t('Resolve issues before adding to cart')}</p>

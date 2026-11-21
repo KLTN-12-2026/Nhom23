@@ -7,7 +7,7 @@ import { parsePcSelections, PcSelection } from '@packages/utils/pc-build-selecti
 
 const endpoint = '/product/api/pc-builder/saved';
 
-export default function useSavedPcBuild(ownerId: string | null, onOpen: (parts: PcSelection[]) => Promise<void>) {
+export default function useSavedPcBuild(ownerId: string | null, onOpen: (parts: PcSelection[], quote?: any) => Promise<void>) {
   const [busy, setBusy] = useState(!!ownerId);
   const [revision, setRevision] = useState<number | null>(null);
   const [message, setMessage] = useState('');
@@ -41,21 +41,23 @@ export default function useSavedPcBuild(ownerId: string | null, onOpen: (parts: 
     working.current = true; setBusy(true); setMessage('');
     try {
       let parts: PcSelection[];
+      let quote: unknown;
       if (ownerId && !fromDevice) {
         const { data } = await axios.get(endpoint, { params: { ownerId } });
         if (!current()) return;
         parts = parsePcSelections(data.parts);
+        quote = data.quote;
         setRevision(data.revision); setConflict(false);
       } else {
         parts = readDevice();
       }
       if (!parts.length) {
         // An explicit choice to use the account version must also apply an empty version.
-        if (ownerId && !fromDevice) await onOpen([]);
+        if (ownerId && !fromDevice) await onOpen([], quote);
         if (current()) setMessage('No saved PC build yet.');
         return;
       }
-      await onOpen(parts);
+      await onOpen(parts, quote);
       if (current()) setMessage(fromDevice && ownerId
         ? 'Opened the device build. Save it to your account to use it on other devices.'
         : 'Opened saved build. Prices, stock and compatibility are checked again.');

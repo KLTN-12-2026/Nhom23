@@ -14,12 +14,19 @@ each group, higher available stock comes first, then lower price and product ID.
 Available stock is the smaller of product stock and the sum of active SKU stock.
 Explicit price sorting retains compatibility filtering but orders by price instead.
 
-Each product includes `recommendation: { status, stock, checks }`. Status is
-`matched`, `unchecked`, or `unknown`. Checks cover CPU/motherboard socket,
+Each product includes `recommendation: { status, stock, checks, compatibility: { issues } }`.
+Status is `matched`, `unchecked`, or `unknown`; the issue list gives suggestions
+relevant warnings before the final build quote. Checks cover CPU/motherboard socket,
 RAM/motherboard memory type, and GPU recommended PSU wattage versus PSU capacity,
 regardless of selection order. No performance/bottleneck, BIOS, physical clearance,
 connector, or cooling guarantee is implied. Missing specs remain visible with a
 review warning. The final quote still validates selections, options, price and stock.
+
+Signed-in users can save up to 50 named builds. Each save records the server-quoted
+component prices, total and quote timestamp; reopening a build checks live prices,
+stock and compatibility again. Restock notifications are created when a watched
+component returns from zero stock and are delivered through the existing notification
+center.
 
 The UI includes the other selected references in its catalog query key and request,
 clears comparisons and resets pagination when those references change. Sorting and

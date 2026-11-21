@@ -19,6 +19,58 @@ function specificationNames(raw: unknown, depth = 0): string[] {
       ? specificationNames(value, depth + 1) : [key]);
 }
 
+function specificationEntries(raw: unknown, depth = 0): [string, unknown][] {
+  if (depth > 3 || !raw || typeof raw !== 'object') return [];
+  if (Array.isArray(raw)) return raw.slice(0, 200).flatMap(row => {
+    if (!row || typeof row !== 'object') return [];
+    const label = [row.name, row.key, row.label].find(value => typeof value === 'string' && value.trim());
+    if (label) return [[label, row.value] as [string, unknown]];
+    return specificationEntries(row, depth + 1);
+  });
+  return Object.entries(raw).slice(0, 200).flatMap(([key, value]) =>
+    value && typeof value === 'object' && !Array.isArray(value) && !('value' in value)
+      ? specificationEntries(value, depth + 1)
+      : [[key, value && typeof value === 'object' && 'value' in value ? value.value : value]]);
+}
+
+function updateNestedSpecification(raw: unknown, name: SpecificationField['name'], nextValue: string, depth = 0): { value: unknown; changed: boolean } {
+  if (depth > 3 || !raw || typeof raw !== 'object') return { value: raw, changed: false };
+  if (Array.isArray(raw)) {
+    let changed = false;
+    const value = raw.map(row => {
+      if (!row || typeof row !== 'object') return row;
+      const labelKey = ['name', 'key', 'label'].find(key => typeof row[key] === 'string' && row[key].trim());
+      if (labelKey && pcSpecificationFieldName(row[labelKey]) === name) {
+        changed = true;
+        return { ...row, value: nextValue };
+      }
+      if (row.value && typeof row.value === 'object') {
+        const nested = updateNestedSpecification(row.value, name, nextValue, depth + 1);
+        if (nested.changed) { changed = true; return { ...row, value: nested.value }; }
+      }
+      const nested = updateNestedSpecification(row, name, nextValue, depth + 1);
+      if (nested.changed) changed = true;
+      return nested.value;
+    });
+    return { value, changed };
+  }
+  const source = raw as Record<string, unknown>;
+  for (const [key, item] of Object.entries(source)) {
+    if (pcSpecificationFieldName(key) === name) {
+      return { value: { ...source, [key]: item && typeof item === 'object' && !Array.isArray(item) && 'value' in item ? { ...item, value: nextValue } : nextValue }, changed: true };
+    }
+    if (item && typeof item === 'object') {
+      const nestedSource = item && 'value' in item ? (item as Record<string, unknown>).value : item;
+      const nested = updateNestedSpecification(nestedSource, name, nextValue, depth + 1);
+      if (nested.changed) return {
+        value: { ...source, [key]: item && 'value' in item ? { ...item as object, value: nested.value } : nested.value },
+        changed: true,
+      };
+    }
+  }
+  return { value: raw, changed: false };
+}
+
 function pcSpecificationFields({ category, subCategory }: SpecificationContext): SpecificationField[] {
   const text = `${category || ''} ${subCategory || ''}`.toLowerCase();
   const names = new Set<SpecificationField['name']>();
@@ -30,31 +82,51 @@ function pcSpecificationFields({ category, subCategory }: SpecificationContext):
   return [...names].map(name => ({ name, example: examples[name] }));
 }
 
-function PcSpecificationGuidance({ category, subCategory, names, onAdd }: SpecificationContext & { names: string[]; onAdd: (fields: SpecificationField[]) => void }) {
+function pcSpecificationValue(raw: unknown, name: SpecificationField['name']): string {
+  const entries = specificationEntries(raw);
+  const value = entries.find(([label]) => pcSpecificationFieldName(label) === name)?.[1];
+  return typeof value === 'string' || typeof value === 'number' ? String(value) : '';
+}
+
+function PcSpecificationGuidance({
+  category, subCategory, names, values, onAdd, onSet,
+}: SpecificationContext & {
+  names: string[];
+  values: unknown;
+  onAdd: (fields: SpecificationField[]) => void;
+  onSet: (name: SpecificationField['name'], value: string) => void;
+}) {
   const fields = pcSpecificationFields({ category, subCategory });
   if (!fields.length) return null;
   const existingFields = new Set(names.map(pcSpecificationFieldName));
   const missing = fields.filter(field => !existingFields.has(field.name));
   return <div className="mb-3 rounded-lg border border-blue-800/60 bg-blue-950/30 p-3 text-sm text-slate-300">
     <p className="flex items-center gap-2 font-medium text-blue-300"><Info size={16} />PC compatibility specifications</p>
-    <p className="mt-1 leading-6">Enter these values from the manufacturer&apos;s specifications so the PC builder can check this component. Examples are suggestions only.</p>
+    <p className="mt-1 leading-6">Enter values from the manufacturer&apos;s specifications so the PC builder can check this component. Examples are suggestions only.</p>
     <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs">{fields.map(field => <div key={field.name}><dt className="inline font-semibold text-slate-200">{field.name}</dt><dd className="inline text-slate-400">: {field.example}</dd></div>)}</dl>
+    <div className="mt-3 grid gap-2 sm:grid-cols-2">{fields.map(field => <label key={field.name} className="text-xs font-medium text-slate-300">{field.name}<input aria-label={`${field.name} PC compatibility specification`} value={pcSpecificationValue(values, field.name)} placeholder={field.example} onChange={event => onSet(field.name, event.target.value)} className="mt-1 block w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-2 text-sm text-white placeholder:text-slate-500" /></label>)}</div>
     {missing.length > 0 && <button type="button" onClick={() => onAdd(missing)} className="mt-3 rounded border border-blue-700 px-3 py-1.5 font-medium text-blue-300 hover:bg-blue-900/40">Add missing PC fields</button>}
   </div>;
 }
 
 const CustomSpecifications = ({ control, error, category, subCategory }: any) => {
-  const { fields, append, remove } = useFieldArray({
+  const { fields, append, update, remove } = useFieldArray({
     control,
     name: "custom_specifications",
   });
   const values = useWatch({ control, name: 'custom_specifications', defaultValue: [] });
+  const setPcField = (name: SpecificationField['name'], value: string) => {
+    const rows = Array.isArray(values) ? values : [];
+    const index = rows.findIndex((row: any) => row && pcSpecificationFieldName(String(row.name ?? row.key ?? row.label ?? '')) === name);
+    if (index >= 0) update(index, { ...rows[index], value });
+    else if (value.trim()) append({ name, value });
+  };
   return (
     <div>
       <label className="block font-semibold text-gray-300 mb-1">
         Custom Specifications
       </label>
-      <PcSpecificationGuidance category={category} subCategory={subCategory} names={specificationNames(values)} onAdd={missing => append(missing.map(field => ({ name: field.name, value: '' })))} />
+      <PcSpecificationGuidance category={category} subCategory={subCategory} names={specificationNames(values)} values={values} onSet={setPcField} onAdd={missing => append(missing.map(field => ({ name: field.name, value: '' })))} />
       <div className="flex flex-col gap-3 ">
         {fields?.map((item, index) => (
           <div key={item.id} className="flex gap-2 items-center">
@@ -153,6 +225,20 @@ function serializeRows(rows: SpecificationRow[], objectShape: boolean): { value?
   return { value: objectShape ? Object.fromEntries(entries) : array };
 }
 
+function draftSpecificationValue(rows: SpecificationRow[], objectShape: boolean): unknown {
+  const entries = rows.filter(row => !row.opaque).map(row => {
+    let value = row.originalValue;
+    if (row.edited) {
+      try { value = row.json ? JSON.parse(row.text) : row.text; }
+      catch { value = row.originalValue; }
+    }
+    return [row.label, value] as [string, unknown];
+  });
+  return objectShape
+    ? Object.fromEntries(entries)
+    : entries.map(([name, value]) => ({ name, value }));
+}
+
 /** Keep the original object/array shape and metadata; only changed values are rewritten. */
 export function EditableCustomSpecifications({ value, onChange, onValidationChange, category, subCategory }: SpecificationContext & { value: unknown; onChange: (value: unknown) => void; onValidationChange: (invalid: boolean) => void }) {
   const [rows, setRows] = useState(() => specificationRows(value));
@@ -173,10 +259,28 @@ export function EditableCustomSpecifications({ value, onChange, onValidationChan
     if (!result.error) { latestValue.current = result.value; onChange(result.value); }
   };
   const add = (names: string[]) => update([...rows, ...names.map(label => ({ label, labelKey: 'name', rawEntry: null, originalValue: '', text: '', json: false, edited: false, added: true, opaque: false }))]);
+  const setPcField = (name: SpecificationField['name'], value: string) => {
+    const index = rows.findIndex(row => !row.opaque && !row.json && pcSpecificationFieldName(row.label) === name);
+    if (index >= 0) {
+      update(rows.map((row, rowIndex) => rowIndex === index ? { ...row, text: value, json: false, edited: true } : row));
+      return;
+    }
+    const nestedIndex = rows.findIndex(row => !row.opaque && row.json && (() => {
+      try { return updateNestedSpecification(JSON.parse(row.text), name, value).changed; }
+      catch { return false; }
+    })());
+    if (nestedIndex >= 0) {
+      const row = rows[nestedIndex];
+      const nested = updateNestedSpecification(JSON.parse(row.text), name, value);
+      update(rows.map((item, rowIndex) => rowIndex === nestedIndex ? { ...item, text: JSON.stringify(nested.value, null, 2), edited: true } : item));
+    } else if (value.trim()) {
+      update([...rows, { label: name, labelKey: 'name', rawEntry: null, originalValue: '', text: value, json: false, edited: true, added: true, opaque: false }]);
+    }
+  };
   const error = serializeRows(rows, objectShape).error;
   return <section className="sm:col-span-2 rounded-lg border border-slate-700 p-4">
     <h2 className="mb-3 font-semibold">Product specifications</h2>
-    <PcSpecificationGuidance category={category} subCategory={subCategory} names={specificationNames(serializeRows(rows, objectShape).value ?? rows.filter(row => !row.opaque).map(row => ({ name: row.label, value: row.originalValue })))} onAdd={missing => add(missing.map(field => field.name))} />
+    <PcSpecificationGuidance category={category} subCategory={subCategory} names={specificationNames(draftSpecificationValue(rows, objectShape))} values={draftSpecificationValue(rows, objectShape)} onSet={setPcField} onAdd={missing => add(missing.map(field => field.name))} />
     <div className="space-y-3">{rows.map((row, index) => <div key={index} className="flex items-start gap-2">
       {row.opaque ? <div className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 p-3 text-xs"><p className="mb-1 text-slate-400">Existing structured entry (preserved)</p><pre className="whitespace-pre-wrap break-words">{JSON.stringify(row.rawEntry, null, 2)}</pre></div> : <>
         <label className="min-w-0 flex-1 text-sm text-slate-300">Specification name<input className="mt-1 block w-full rounded border border-slate-600 bg-slate-900 p-2 text-white" value={row.label} onChange={event => update(rows.map((item, i) => i === index ? { ...item, label: event.target.value } : item))} /></label>

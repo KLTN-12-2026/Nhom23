@@ -1,6 +1,6 @@
 import prisma from '@packages/libs/prisma';
-import { handle, pageArgs } from '@packages/utils/api';
-import { ForbiddenError, ValidationError } from '@packages/error-handler';
+import { handle, objectId, pageArgs } from '@packages/utils/api';
+import { ForbiddenError, NotFoundError, ValidationError } from '@packages/error-handler';
 import { Prisma } from '@prisma/client';
 import { PC_SLOTS, PcSlot, COMPONENT_TERMS, componentMatches, assessCompatibility } from '@packages/utils/pc-build';
 import { parsePcSelections } from '@packages/utils/pc-build-selection';
@@ -17,19 +17,89 @@ function selectionsFrom(value: unknown) {
   catch (error) { throw new ValidationError(error instanceof Error ? error.message : 'Invalid PC build'); }
 }
 
+async function syncAvailabilityWatches(buildId: string, ownerId: string, parts: ReturnType<typeof selectionsFrom>) {
+  await prisma.pcBuildAvailabilityWatch.deleteMany({ where: { buildId } });
+  const productIds = [...new Set(parts.map(part => part.id))];
+  if (productIds.length) {
+    await prisma.pcBuildAvailabilityWatch.createMany({
+      data: productIds.map(productId => ({ buildId, ownerId, productId })),
+    });
+  }
+}
+
+async function quoteSelections(selections: ReturnType<typeof selectionsFrom>) {
+  const ids = selections.map(part => part.id);
+  const products = await prisma.products.findMany({ where: { ...availableProducts(), id: { in: ids } }, select });
+  const parts = selections.map(selection => {
+    const product = products.find(item => item.id === selection.id);
+    if (!product || !componentMatches(product, selection.slot)) throw new ValidationError('A selected component is unavailable or belongs to a different category');
+    const variant = product.variants.find(item => item.id === selection.variantId);
+    if ((product.variants.length && !variant) || (!product.variants.length && selection.variantId)) throw new ValidationError(`Select a variant for ${product.title}`);
+    const options = selection.selectedOptions || {};
+    if (!variant && ((product.colors.length && !product.colors.includes(options.color)) || (product.sizes.length && !product.sizes.includes(options.size)))) throw new ValidationError(`Select options for ${product.title}`);
+    const stock = Math.min(product.stock, variant?.stock ?? product.stock);
+    return { ...product, slot: selection.slot, stock, variantId: variant?.id || null, sale_price: variant?.price ?? product.sale_price, selectedOptions: variant ? { color: variant.color, size: variant.size } : { color: options.color || '', size: options.size || '' } };
+  });
+  const compatibility = assessCompatibility(Object.fromEntries(parts.map(part => [part.slot, part])));
+  const issues = [...compatibility.issues];
+  for (const part of parts) if (part.stock < 1) issues.push({ level: 'error', message: `${part.title} is out of stock.` });
+  return {
+    parts,
+    issues,
+    compatibility: { checks: compatibility.checks, notes: compatibility.notes },
+    total: parts.reduce((sum, part) => sum + usdCents(part.sale_price), 0) / 100,
+    currency: 'usd',
+    canAddToCart: !issues.some(issue => issue.level === 'error'),
+  };
+}
+
+function quoteSnapshot(quote: Awaited<ReturnType<typeof quoteSelections>>) {
+  return {
+    parts: quote.parts.map(part => ({
+      slot: part.slot,
+      id: part.id,
+      title: part.title,
+      sale_price: part.sale_price,
+      stock: part.stock,
+      variantId: part.variantId,
+      selectedOptions: part.selectedOptions,
+      custom_specification: part.custom_specification,
+    })),
+    issues: quote.issues,
+    compatibility: quote.compatibility,
+    total: quote.total,
+    currency: quote.currency,
+    canAddToCart: quote.canAddToCart,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function pcBuildResponse(build: { id: string; name: string; parts: unknown; quote: unknown; updatedAt: Date }) {
+  return { id: build.id, name: build.name, parts: build.parts, quote: build.quote, updatedAt: build.updatedAt };
+}
+
 export const getSavedBuild = handle(async (req, res) => {
   if (req.query.ownerId !== req.user!.id) throw new ForbiddenError();
   res.setHeader('Cache-Control', 'no-store');
   const id = req.user!.id;
   let saved;
   try {
-    saved = await prisma.savedPcBuild.upsert({ where: { id }, create: { id, parts: [] }, update: {} });
+    saved = await prisma.savedPcBuild.upsert({ where: { id }, create: { id, ownerId: id, parts: [] }, update: { ownerId: id } });
   } catch (error) {
     // Two devices may create the initial empty record at the same time.
     if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') throw error;
     saved = await prisma.savedPcBuild.findUniqueOrThrow({ where: { id } });
   }
-  res.json({ parts: saved.parts, revision: saved.revision, updatedAt: saved.updatedAt });
+  const parts = selectionsFrom(saved.parts);
+  if (parts.length) await syncAvailabilityWatches(id, id, parts);
+  res.json({ parts, quote: saved.quote, revision: saved.revision, updatedAt: saved.updatedAt });
+});
+
+export const getSavedBuilds = handle(async (req, res) => {
+  if (req.query.ownerId !== req.user!.id) throw new ForbiddenError();
+  res.setHeader('Cache-Control', 'no-store');
+  const builds = await prisma.pcBuild.findMany({ where: { ownerId: req.user!.id }, orderBy: { updatedAt: 'desc' }, take: 50 });
+  res.json({ builds: builds.map(pcBuildResponse) });
 });
 
 export const saveBuild = handle(async (req, res) => {
@@ -39,15 +109,72 @@ export const saveBuild = handle(async (req, res) => {
   if (!Number.isInteger(revision) || revision < 0 || revision >= 2147483647) throw new ValidationError('Invalid revision');
   const parts = selectionsFrom(req.body.parts);
   if (!parts.length) throw new ValidationError('Choose at least one component');
+  const quote = quoteSnapshot(await quoteSelections(parts));
   const result = await prisma.savedPcBuild.updateMany({
     where: { id: req.user!.id, revision },
-    data: { parts, revision: { increment: 1 } },
+    data: { parts, quote, revision: { increment: 1 } },
   });
   if (!result.count) {
     res.status(409).json({ message: 'Saved PC build changed on another device', code: 'PC_BUILD_CONFLICT' });
     return;
   }
-  res.json({ revision: revision + 1 });
+  await syncAvailabilityWatches(req.user!.id, req.user!.id, parts);
+  res.json({ revision: revision + 1, quote });
+});
+
+export const createPcBuild = handle(async (req, res) => {
+  if (req.body.ownerId !== req.user!.id) throw new ForbiddenError();
+  res.setHeader('Cache-Control', 'no-store');
+  const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+  if (!name || name.length > 200) throw new ValidationError('Provide a build name');
+  const selections = selectionsFrom(req.body.parts);
+  if (!selections.length) throw new ValidationError('Choose at least one component');
+  if (await prisma.pcBuild.count({ where: { ownerId: req.user!.id } }) >= 50) throw new ValidationError('You can save up to 50 named PC builds');
+  const quote = quoteSnapshot(await quoteSelections(selections));
+  const created = await prisma.pcBuild.create({ data: { ownerId: req.user!.id, name, parts: selections, quote } });
+  await syncAvailabilityWatches(created.id, req.user!.id, selections);
+  res.status(201).json(pcBuildResponse(created));
+});
+
+export const getPcBuild = handle(async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const id = objectId(req.params.id);
+  const build = await prisma.pcBuild.findFirst({ where: { id, ownerId: req.user!.id } });
+  if (!build || build.ownerId !== req.user!.id) throw new NotFoundError('PC build not found');
+  res.json(pcBuildResponse(build));
+});
+
+export const updatePcBuild = handle(async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const id = objectId(req.params.id);
+  const build = await prisma.pcBuild.findFirst({ where: { id, ownerId: req.user!.id } });
+  if (!build) throw new NotFoundError('PC build not found');
+  const data: Prisma.pcBuildUpdateInput = {};
+  if (req.body.name !== undefined) {
+    if (typeof req.body.name !== 'string' || !req.body.name.trim() || req.body.name.trim().length > 200) throw new ValidationError('Provide a build name');
+    data.name = req.body.name.trim();
+  }
+  let selections: ReturnType<typeof selectionsFrom> | undefined;
+  if (req.body.parts !== undefined) {
+    selections = selectionsFrom(req.body.parts);
+    if (!selections.length) throw new ValidationError('Choose at least one component');
+    data.parts = selections;
+    data.quote = quoteSnapshot(await quoteSelections(selections));
+  }
+  if (!Object.keys(data).length) throw new ValidationError('No build changes provided');
+  const updated = await prisma.pcBuild.update({ where: { id }, data });
+  if (selections) await syncAvailabilityWatches(updated.id, req.user!.id, selections);
+  res.json(pcBuildResponse(updated));
+});
+
+export const deletePcBuild = handle(async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const id = objectId(req.params.id);
+  const build = await prisma.pcBuild.findFirst({ where: { id, ownerId: req.user!.id } });
+  if (!build) throw new NotFoundError('PC build not found');
+  await prisma.pcBuildAvailabilityWatch.deleteMany({ where: { buildId: id } });
+  await prisma.pcBuild.delete({ where: { id } });
+  res.json({ ok: true });
 });
 
 export const buildCatalog = handle(async (req, res) => {
@@ -84,19 +211,5 @@ export const buildCatalog = handle(async (req, res) => {
 export const quoteBuild = handle(async (req, res) => {
   const selections = selectionsFrom(req.body.parts);
   if (!selections.length) throw new ValidationError('Choose at least one component');
-  const ids = selections.map(p => p.id);
-  const products = await prisma.products.findMany({ where: { ...availableProducts(), id: { in: ids } }, select });
-  const parts = selections.map(selection => {
-    const product = products.find(p => p.id === selection.id);
-    if (!product || !componentMatches(product, selection.slot)) throw new ValidationError('A selected component is unavailable or belongs to a different category');
-    const variant = product.variants.find(v => v.id === selection.variantId);
-    if ((product.variants.length && !variant) || (!product.variants.length && selection.variantId)) throw new ValidationError(`Select a variant for ${product.title}`);
-    const options = selection.selectedOptions || {};
-    if (!variant && ((product.colors.length && !product.colors.includes(options.color)) || (product.sizes.length && !product.sizes.includes(options.size)))) throw new ValidationError(`Select options for ${product.title}`);
-    const stock = Math.min(product.stock, variant?.stock ?? product.stock);
-    return { ...product, slot: selection.slot, stock, variantId: variant?.id || null, sale_price: variant?.price ?? product.sale_price, selectedOptions: variant ? { color: variant.color, size: variant.size } : { color: options.color || '', size: options.size || '' } };
-  });
-  const { issues, checks, notes } = assessCompatibility(Object.fromEntries(parts.map(p => [p.slot, p])));
-  for (const part of parts) if (part.stock < 1) issues.push({ level: 'error', message: `${part.title} is out of stock.` });
-  res.json({ parts, issues, compatibility: { checks, notes }, total: parts.reduce((sum, p) => sum + usdCents(p.sale_price), 0) / 100, currency: 'usd', canAddToCart: !issues.some(i => i.level === 'error') });
+  res.json(await quoteSelections(selections));
 });

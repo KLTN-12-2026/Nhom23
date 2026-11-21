@@ -12,10 +12,15 @@ export function recommendPcProducts<T extends { id: string; sale_price: number }
     const stock = pcAvailableStock(product);
     if (!stock) return [];
     // Replacing a component must not compare it against the old part in that slot.
-    const checks = assessCompatibility({ ...selected, [slot]: product }).checks.filter(check => check.slots.includes(slot));
+    const compatibility = assessCompatibility({ ...selected, [slot]: product });
+    const checks = compatibility.checks.filter(check => check.slots.includes(slot));
     if (checks.some(check => check.status === 'conflict')) return [];
     const status: 'unchecked' | 'unknown' | 'matched' = checks.length === 0 ? 'unchecked' : checks.some(check => check.status === 'unknown') ? 'unknown' : 'matched';
-    return [{ ...product, recommendation: { status, stock, checks } }];
+    const issues = checks.filter(check => check.status !== 'passed').map(check => ({
+      level: check.status === 'conflict' ? 'error' : 'warning',
+      message: check.message,
+    }));
+    return [{ ...product, recommendation: { status, stock, checks, compatibility: { issues } } }];
   }).sort((a, b) => {
     if (sort === 'recommended') {
       const rank = { matched: 0, unchecked: 1, unknown: 2 };

@@ -44,11 +44,16 @@ router.get('/seller-violations', isAuthenticated, isSeller, moderation.sellerVio
 router.get('/seller-moderation-tasks', isAuthenticated, isSeller, moderation.sellerModerationTasks);
 router.patch('/seller-moderation-tasks/:id', isAuthenticated, isSeller, moderation.resolveModerationTask);
 import { listVariants, saveVariant } from '../controllers/variants.controller';
-import { buildCatalog, quoteBuild, getSavedBuild, saveBuild } from '../controllers/pc-builder.controller';
+import { buildCatalog, quoteBuild, getSavedBuild, getSavedBuilds, saveBuild, createPcBuild, getPcBuild, updatePcBuild, deletePcBuild } from '../controllers/pc-builder.controller';
 router.get('/pc-builder/catalog', buildCatalog);
 router.post('/pc-builder/quote', quoteBuild);
 router.get('/pc-builder/saved', isAuthenticated, isUser, getSavedBuild);
 router.put('/pc-builder/saved', isAuthenticated, isUser, saveBuild);
+router.get('/pc-builder/builds', isAuthenticated, isUser, getSavedBuilds);
+router.post('/pc-builder/builds', isAuthenticated, isUser, createPcBuild);
+router.get('/pc-builder/builds/:id', isAuthenticated, isUser, getPcBuild);
+router.patch('/pc-builder/builds/:id', isAuthenticated, isUser, updatePcBuild);
+router.delete('/pc-builder/builds/:id', isAuthenticated, isUser, deletePcBuild);
 router.get('/variants/:id', listVariants);
 router.put('/variants/:id', isAuthenticated, isSeller, saveVariant);
 router.get('/sitemap-data', handle(async (req, res) => {

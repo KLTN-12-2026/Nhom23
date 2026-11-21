@@ -469,9 +469,31 @@ model shoppingState {
 
 model savedPcBuild {
   id        String @id @map("_id") @db.ObjectId
+  ownerId   String @db.ObjectId
   parts     Json
+  quote     Json?
   revision  Int @default(0)
   updatedAt DateTime @updatedAt
+  @@index([ownerId])
+}
+
+model pcBuild {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  ownerId   String @db.ObjectId
+  name      String
+  parts     Json
+  quote     Json?
+  updatedAt DateTime @updatedAt
+  @@index([ownerId])
+}
+
+model pcBuildAvailabilityWatch {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  buildId   String @db.ObjectId
+  ownerId   String @db.ObjectId
+  productId String @db.ObjectId
+  @@unique([buildId, productId])
+  @@index([productId])
 }
 
 model orderItems {

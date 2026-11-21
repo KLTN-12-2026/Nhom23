@@ -3,7 +3,7 @@ import db, { resetDb } from './mocks/prisma';
 import { appFor, userId, productId, shopId } from './helpers';
 import * as products from '../../apps/product-service/src/controllers/product-management.controller';
 beforeEach(resetDb);
-const product = { id: productId, shopId, stock: 10, sale_price: 50, regular_price: 100, title: 'CPU', shop: { sellerId: userId }, images: [] };
+const product = { id: productId, shopId, stock: 10, sale_price: 50, regular_price: 100, title: 'CPU', category: 'PC', subCategory: 'CPU', updatedAt: new Date(), shop: { sellerId: userId }, images: [] };
 test.each([{ stock: -1 }, { stock: 1.5 }, { sale_price: '10' }, { colors: 'red' }, { images: [] }, { status: 'Bogus' }])('invalid product changes cannot reach database mutation', async body => {
   expect((await request(appFor('put', '/:id', products.updateProduct, 'seller')).put('/' + productId).send(body)).status).toBe(400);
   expect(db.products.update).not.toHaveBeenCalled();
@@ -27,6 +27,18 @@ test('low-to-low stock adjustment does not spam notifications', async () => {
   db.products.findFirst.mockResolvedValue({ ...product, stock: 3 }); db.products.update.mockResolvedValue({ ...product, stock: 2 });
   await request(appFor('put', '/:id', products.updateProduct, 'seller')).put('/' + productId).send({ stock: 2 });
   expect(db.notifications.create).not.toHaveBeenCalled();
+});
+test('restocking a saved PC component notifies its buyer', async () => {
+  db.products.findFirst.mockResolvedValue({ ...product, stock: 0 });
+  db.products.update.mockResolvedValue({ ...product, stock: 3 });
+  db.pcBuildAvailabilityWatch.findMany.mockResolvedValue([{ ownerId: userId }]);
+  const response = await request(appFor('put', '/:id', products.updateProduct, 'seller')).put('/' + productId).send({ stock: 3 });
+  expect(response.status).toBe(200);
+  expect(db.notifications.createMany.mock.calls[0][0].data).toEqual([expect.objectContaining({
+    userId,
+    title: 'Saved PC component back in stock',
+    message: 'CPU is back in stock for a saved PC build.',
+  })]);
 });
 test('reviews require a delivered purchase', async () => {
   db.orderItems.findFirst.mockResolvedValue(null);

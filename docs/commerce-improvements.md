@@ -15,10 +15,11 @@
 - Orders follow Pending → Confirmed → Processing → Shipped → Delivered. Cancellation is allowed before shipment; buyers can cancel only Pending orders. Status changes record actor/time/reason.
 - Buyers can request a full-order return for a Delivered/Paid order, with a reason and up to five HTTPS evidence links. Sellers approve/reject, then confirm receipt. Receipt sets the order to Returned so the existing admin refund flow can process it. Returned stock requires inspection and a deliberate seller inventory adjustment.
 - `/pc-builder` supports component search, live USD totals, socket/RAM/PSU checks, add-to-cart, saving on the current device and sharing a selection URL. Price/stock are reloaded when opening a shared build. Missing specifications produce a warning, not a compatibility guarantee.
+- Signed-in users can save up to 50 named builds, compare two complete configurations (all eight slots, saved component prices, compatibility notes and total), and reopen a build to see its saved estimate beside the current catalog total. Seller product editors provide quick socket, RAM type, PSU wattage and recommended PSU fields. Build suggestions include slot-specific compatibility issues; a saved component returning from zero stock creates an in-app user notification.
 
 ## Schema and activation
 
-New collections: `productVariant`, `orderEvent`, `returnRequest`. New fields: order currency, order item SKU/variant IDs, receipt session ID. Existing prices are **not** converted.
+New collections: `productVariant`, `orderEvent`, `returnRequest`, `pcBuild`, `pcBuildAvailabilityWatch`. New fields: order currency, order item SKU/variant IDs, receipt session ID, and a quote snapshot on `savedPcBuild`. Existing prices are **not** converted.
 
 Before using the changes against the intended database, run:
 

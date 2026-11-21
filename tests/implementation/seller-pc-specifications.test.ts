@@ -141,6 +141,13 @@ describe('seller PC specifications editor', () => {
     expect(ui.button('Add missing PC fields')).toBeUndefined();
   });
 
+  it('quick edits a recognized field inside a grouped specification without duplicating it', () => {
+    const original = { cpu: { 'CPU Socket': 'AM5' }, details: { cores: 8 } };
+    const ui = editor(original, { category: 'PC Components', subCategory: 'CPU' });
+    ui.change('AM5', 'LGA1700');
+    expect(ui.value()).toEqual({ cpu: { 'CPU Socket': 'LGA1700' }, details: { cores: 8 } });
+  });
+
   it('does not mistake a memory group without a type for a provided RAM type', () => {
     const ui = editor({ cpu: { socket: 'AM5' }, memory: { capacity: '32 GB' } });
     expect(ui.button('Add missing PC fields')).toBeDefined();

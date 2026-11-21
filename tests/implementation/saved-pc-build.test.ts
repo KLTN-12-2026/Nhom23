@@ -3,10 +3,15 @@ import db, { resetDb } from './mocks/prisma';
 import { appFor, userId, otherId, productId } from './helpers';
 import { parsePcSelections } from '@packages/utils/pc-build-selection';
 import { componentMatches } from '@packages/utils/pc-build';
-import { getSavedBuild, saveBuild, buildCatalog, quoteBuild } from '../../apps/product-service/src/controllers/pc-builder.controller';
+import { getSavedBuild, getSavedBuilds, saveBuild, createPcBuild, buildCatalog, quoteBuild } from '../../apps/product-service/src/controllers/pc-builder.controller';
+import { notifyPcBuildRestock } from '../../apps/product-service/src/utils/pc-build-restock';
 
 const selection = { slot: 'cpu', id: productId, selectedOptions: { color: 'Black', size: '' } };
-beforeEach(resetDb);
+const quotedProduct = { id: productId, title: 'CPU', category: 'CPU', subCategory: 'Processor', tags: [], colors: [], sizes: [], variants: [], custom_specification: {}, sale_price: 100, stock: 5 };
+beforeEach(() => {
+  resetDb();
+  db.products.findMany.mockResolvedValue([quotedProduct]);
+});
 
 test('saved build payload keeps only bounded component references, never stale prices or account data', () => {
   expect(parsePcSelections([{ ...selection, id: 'ABCDEF123456ABCDEF123456', price: 1, stock: 9000, ownerId: otherId }])).toEqual([
@@ -39,7 +44,7 @@ test('saved build read initializes only the authenticated account and disables s
   expect(response.status).toBe(200);
   expect(response.headers['cache-control']).toBe('no-store');
   expect(response.body).toMatchObject({ parts: [], revision: 0 });
-  expect(db.savedPcBuild.upsert.mock.calls[0][0]).toEqual({ where: { id: userId }, create: { id: userId, parts: [] }, update: {} });
+  expect(db.savedPcBuild.upsert.mock.calls[0][0]).toEqual({ where: { id: userId }, create: { id: userId, ownerId: userId, parts: [] }, update: { ownerId: userId } });
 });
 
 test('saving uses account-scoped compare-and-swap and never retries a conflicting overwrite', async () => {
@@ -50,9 +55,51 @@ test('saving uses account-scoped compare-and-swap and never retries a conflictin
   expect(conflict.status).toBe(409);
   expect(conflict.body.code).toBe('PC_BUILD_CONFLICT');
   expect(db.savedPcBuild.updateMany).toHaveBeenCalledTimes(1);
-  expect(db.savedPcBuild.updateMany.mock.calls[0][0]).toEqual({ where: { id: userId, revision: 3 }, data: { parts: [selection], revision: { increment: 1 } } });
+  expect(db.savedPcBuild.updateMany.mock.calls[0][0]).toMatchObject({
+    where: { id: userId, revision: 3 },
+    data: { parts: [selection], revision: { increment: 1 }, quote: { total: 100, currency: 'usd' } },
+  });
   db.savedPcBuild.updateMany.mockResolvedValueOnce({ count: 1 });
-  expect((await request(app).put('/').send(body)).body.revision).toBe(4);
+  const saved = await request(app).put('/').send(body);
+  expect(saved.body.revision).toBe(4);
+  expect(saved.body.quote).toMatchObject({ total: 100, updatedAt: expect.any(String) });
+  expect(db.pcBuildAvailabilityWatch.createMany).toHaveBeenCalledWith({ data: [{ buildId: userId, ownerId: userId, productId }] });
+});
+
+test('named builds are owner-scoped and save a server-priced compatibility snapshot', async () => {
+  const app = appFor('post', '/', createPcBuild);
+  db.pcBuild.count.mockResolvedValue(0);
+  db.pcBuild.create.mockResolvedValue({ id: otherId, name: 'Gaming PC', parts: [selection], quote: { total: 100 }, updatedAt: new Date('2026-10-15') });
+  const denied = await request(app).post('/').send({ ownerId: otherId, name: 'Other build', parts: [selection] });
+  expect(denied.status).toBe(403);
+  expect(db.pcBuild.create).not.toHaveBeenCalled();
+
+  const response = await request(app).post('/').send({ ownerId: userId, name: ' Gaming PC ', parts: [selection], quote: { total: 1 } });
+  expect(response.status).toBe(201);
+  expect(response.body).toMatchObject({ id: otherId, name: 'Gaming PC', quote: { total: 100 } });
+  expect(db.pcBuild.create.mock.calls[0][0].data).toMatchObject({ ownerId: userId, name: 'Gaming PC', parts: [selection], quote: { total: 100 } });
+  expect(db.pcBuildAvailabilityWatch.createMany).toHaveBeenCalledWith({ data: [{ buildId: otherId, ownerId: userId, productId }] });
+});
+
+test('named build list cannot be read as another account', async () => {
+  expect((await request(appFor('get', '/', getSavedBuilds)).get('/?ownerId=' + otherId)).status).toBe(403);
+  expect(db.pcBuild.findMany).not.toHaveBeenCalled();
+});
+
+test('a restock notification is created once per owner, even for multiple saved builds', async () => {
+  db.pcBuildAvailabilityWatch.findMany.mockResolvedValue([
+    { ownerId: userId }, { ownerId: userId }, { ownerId: otherId },
+  ]);
+  await notifyPcBuildRestock(productId, 'Test CPU');
+  expect(db.notifications.createMany).toHaveBeenCalledWith({
+    data: [userId, otherId].map(userId => expect.objectContaining({
+      userId,
+      type: 'System',
+      title: 'Saved PC component back in stock',
+      message: 'Test CPU is back in stock for a saved PC build.',
+      redirectUrl: '/pc-builder',
+    })),
+  });
 });
 
 test.each([-1, 1.5, '0', null, 2147483647])('invalid revisions cannot write the saved build: %s', async revision => {
@@ -118,7 +165,7 @@ test.each([
   db.products.count.mockResolvedValue(1);
   const catalog = await request(appFor('get', '/', buildCatalog)).get('/?slot=cooler');
   expect(catalog.status).toBe(200);
-  expect(catalog.body.products).toEqual([{ ...product, recommendation: { status: 'unchecked', stock: 3, checks: [] } }]);
+  expect(catalog.body.products).toEqual([{ ...product, recommendation: { status: 'unchecked', stock: 3, checks: [], compatibility: { issues: [] } } }]);
   const filter = db.products.findMany.mock.calls[0][0].where.AND[0].OR;
   expect(filter).toContainEqual(field === 'tags'
     ? { tags: { has: 'cooling' } }
